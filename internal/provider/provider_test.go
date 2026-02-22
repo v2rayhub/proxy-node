@@ -121,6 +121,73 @@ func TestVMessOutbound_TCPHTTP_HostHeaderIncluded(t *testing.T) {
 	}
 }
 
+func TestFromURI_VLESS_RealityFieldsMapped(t *testing.T) {
+	raw := "vless://80cbb58b-74c0-4fb5-a66e-818ffc81a3cd@example.com:443?type=tcp&headerType=http&security=reality&pbk=PUBKEY123&sid=abcd1234&fp=chrome&sni=aparat.com&spx=%2F&pqv=VERIFY123&encryption=none&path=%2Ftest"
+
+	p, err := FromURI(raw)
+	if err != nil {
+		t.Fatalf("FromURI() error = %v", err)
+	}
+	v, ok := p.(*VLESS)
+	if !ok {
+		t.Fatalf("provider type = %T, want *VLESS", p)
+	}
+	if v.Security != "reality" {
+		t.Fatalf("v.Security = %q, want reality", v.Security)
+	}
+	if v.PublicKey != "PUBKEY123" {
+		t.Fatalf("v.PublicKey = %q, want PUBKEY123", v.PublicKey)
+	}
+	if v.ShortID != "abcd1234" {
+		t.Fatalf("v.ShortID = %q, want abcd1234", v.ShortID)
+	}
+	if v.Fingerprint != "chrome" {
+		t.Fatalf("v.Fingerprint = %q, want chrome", v.Fingerprint)
+	}
+}
+
+func TestVLESSOutbound_RealitySettingsPresent(t *testing.T) {
+	v := &VLESS{
+		Address:     "example.com",
+		Port:        443,
+		ID:          "80cbb58b-74c0-4fb5-a66e-818ffc81a3cd",
+		Encryption:  "none",
+		Network:     "tcp",
+		HeaderType:  "http",
+		Path:        "/test",
+		Security:    "reality",
+		SNI:         "aparat.com",
+		Fingerprint: "chrome",
+		PublicKey:   "PUBKEY123",
+		ShortID:     "abcd1234",
+		SpiderX:     "/",
+		PQV:         "VERIFY123",
+	}
+
+	out, err := v.Outbound()
+	if err != nil {
+		t.Fatalf("Outbound() error = %v", err)
+	}
+	stream := mustMap(t, out["streamSettings"])
+	reality := mustMap(t, stream["realitySettings"])
+
+	if got := reality["serverName"]; got != "aparat.com" {
+		t.Fatalf("reality.serverName = %#v, want aparat.com", got)
+	}
+	if got := reality["password"]; got != "PUBKEY123" {
+		t.Fatalf("reality.password = %#v, want PUBKEY123", got)
+	}
+	if got := reality["shortId"]; got != "abcd1234" {
+		t.Fatalf("reality.shortId = %#v, want abcd1234", got)
+	}
+	if got := reality["fingerprint"]; got != "chrome" {
+		t.Fatalf("reality.fingerprint = %#v, want chrome", got)
+	}
+	if got := reality["mldsa65Verify"]; got != "VERIFY123" {
+		t.Fatalf("reality.mldsa65Verify = %#v, want VERIFY123", got)
+	}
+}
+
 func vmessURI(t *testing.T, payload map[string]any) string {
 	t.Helper()
 	b, err := json.Marshal(payload)
