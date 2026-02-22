@@ -1,0 +1,273 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"math/rand"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"health-node/internal/core"
+	"health-node/internal/proxy"
+	"health-node/internal/provider"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
+	}
+
+	sub := os.Args[1]
+	switch sub {
+	case "probe":
+		if err := runProbe(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "probe failed: %v\n", err)
+			os.Exit(1)
+		}
+	case "speed":
+		if err := runSpeed(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "speed failed: %v\n", err)
+			os.Exit(1)
+		}
+	case "help", "-h", "--help":
+		usage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", sub)
+		usage()
+		os.Exit(2)
+	}
+}
+
+func usage() {
+	fmt.Println(`health-node - v2ray/xray outbound health checker
+
+Usage:
+  health-node probe --uri <vless|vmess URI> --core <path to xray/v2ray>
+  health-node speed --uri <vless|vmess URI> --core <path to xray/v2ray>
+
+Commands:
+  probe   Start core with generated config and run an HTTP probe through SOCKS5.
+  speed   Start core and measure download speed through SOCKS5.
+
+Common flags:
+  --uri string          VLESS/VMess URI
+  --core string         core binary path (default: xray)
+  --local-socks int     local SOCKS port (default: random 20000-40000)
+  --timeout duration    timeout for startup and checks (default: 20s)
+
+Probe flags:
+  --url string          probe URL (default: https://www.gstatic.com/generate_204)
+
+Speed flags:
+  --url string          download URL (default: https://speed.hetzner.de/10MB.bin)
+  --max-bytes int       stop after N bytes (0 means full response)
+`)
+}
+
+func runProbe(args []string) error {
+	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
+	uri := fs.String("uri", "", "VLESS/VMess URI")
+	corePath := fs.String("core", "xray", "core binary path")
+	probeURL := fs.String("url", "https://www.gstatic.com/generate_204", "probe URL")
+	timeout := fs.Duration("timeout", 20*time.Second, "timeout")
+	localPort := fs.Int("local-socks", 0, "local socks port")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *uri == "" {
+		return errors.New("--uri is required")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	prov, err := provider.FromURI(*uri)
+	if err != nil {
+		return err
+	}
+	outbound, err := prov.Outbound()
+	if err != nil {
+		return err
+	}
+	port := *localPort
+	if port == 0 {
+		port = randomPort()
+	}
+
+	r := core.Runner{CorePath: *corePath, Port: port, Timeout: *timeout}
+	started, err := r.Start(ctx, outbound)
+	if err != nil {
+		return err
+	}
+	defer started.Stop()
+
+	socksAddr := fmt.Sprintf("127.0.0.1:%d", port)
+	if err := waitSocks(ctx, socksAddr, *timeout); err != nil {
+		return fmt.Errorf("core did not become ready: %w\ncore log tail:\n%s", err, started.ReadLogTail())
+	}
+
+	latency, code, n, err := probeHTTP(ctx, socksAddr, *probeURL, *timeout)
+	if err != nil {
+		return fmt.Errorf("probe request failed: %w\ncore log tail:\n%s", err, started.ReadLogTail())
+	}
+
+	fmt.Printf("status=ok protocol=%s code=%d latency_ms=%d bytes=%d\n", prov.Name(), code, latency.Milliseconds(), n)
+	return nil
+}
+
+func runSpeed(args []string) error {
+	fs := flag.NewFlagSet("speed", flag.ContinueOnError)
+	uri := fs.String("uri", "", "VLESS/VMess URI")
+	corePath := fs.String("core", "xray", "core binary path")
+	speedURL := fs.String("url", "https://speed.hetzner.de/10MB.bin", "speed test URL")
+	maxBytes := fs.Int64("max-bytes", 10*1024*1024, "max bytes to download (0 for full)")
+	timeout := fs.Duration("timeout", 45*time.Second, "timeout")
+	localPort := fs.Int("local-socks", 0, "local socks port")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *uri == "" {
+		return errors.New("--uri is required")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	prov, err := provider.FromURI(*uri)
+	if err != nil {
+		return err
+	}
+	outbound, err := prov.Outbound()
+	if err != nil {
+		return err
+	}
+	port := *localPort
+	if port == 0 {
+		port = randomPort()
+	}
+
+	r := core.Runner{CorePath: *corePath, Port: port, Timeout: *timeout}
+	started, err := r.Start(ctx, outbound)
+	if err != nil {
+		return err
+	}
+	defer started.Stop()
+
+	socksAddr := fmt.Sprintf("127.0.0.1:%d", port)
+	if err := waitSocks(ctx, socksAddr, *timeout); err != nil {
+		return fmt.Errorf("core did not become ready: %w\ncore log tail:\n%s", err, started.ReadLogTail())
+	}
+
+	bytesRead, elapsed, err := speedHTTP(ctx, socksAddr, *speedURL, *maxBytes, *timeout)
+	if err != nil {
+		return fmt.Errorf("speed request failed: %w\ncore log tail:\n%s", err, started.ReadLogTail())
+	}
+	mbps := (float64(bytesRead) * 8) / elapsed.Seconds() / 1_000_000
+	fmt.Printf("status=ok protocol=%s bytes=%d elapsed_ms=%d mbps=%.2f\n", prov.Name(), bytesRead, elapsed.Milliseconds(), mbps)
+	return nil
+}
+
+func waitSocks(ctx context.Context, socksAddr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if time.Now().After(deadline) {
+			return errors.New("timeout")
+		}
+		conn, err := net.DialTimeout("tcp", socksAddr, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+func probeHTTP(ctx context.Context, socksAddr, rawURL string, timeout time.Duration) (time.Duration, int, int64, error) {
+	client := httpClientThroughSocks(socksAddr, timeout)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer resp.Body.Close()
+	n, _ := io.CopyN(io.Discard, resp.Body, 2048)
+	return time.Since(start), resp.StatusCode, n, nil
+}
+
+func speedHTTP(ctx context.Context, socksAddr, rawURL string, maxBytes int64, timeout time.Duration) (int64, time.Duration, error) {
+	client := httpClientThroughSocks(socksAddr, timeout)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return 0, 0, fmt.Errorf("unexpected HTTP status %d", resp.StatusCode)
+	}
+
+	var n int64
+	if maxBytes > 0 {
+		n, err = io.CopyN(io.Discard, resp.Body, maxBytes)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, 0, err
+		}
+	} else {
+		n, err = io.Copy(io.Discard, resp.Body)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	return n, time.Since(start), nil
+}
+
+func httpClientThroughSocks(socksAddr string, timeout time.Duration) *http.Client {
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if !strings.EqualFold(network, "tcp") {
+				return nil, fmt.Errorf("unsupported network %s", network)
+			}
+			return proxy.DialSocks5(ctx, socksAddr, addr, timeout)
+		},
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			if _, err := url.Parse(req.URL.String()); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+}
+
+func randomPort() int {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	return 20000 + r.Intn(20000)
+}
