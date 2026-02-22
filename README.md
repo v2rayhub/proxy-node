@@ -78,6 +78,11 @@ HTTP proxy:
 
 `socks` is an alias of `proxy --inbound socks`.
 
+Traffic UI behavior:
+- In an interactive terminal, traffic is shown as a live dashboard (top-style refresh).
+- In non-interactive output (logs/CI), traffic is printed as periodic lines.
+- Disable with `--no-traffic`.
+
 ## Optional flags
 
 ```text
