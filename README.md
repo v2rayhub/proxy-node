@@ -119,3 +119,16 @@ Minimal SOCKS5 client used by HTTP probe/speed requests.
 
 - `internal/installer`
 Downloads matching core release from GitHub and installs executable locally.
+
+## GitHub Release Automation
+
+Tag push triggers a multi-platform release workflow (`.github/workflows/release.yml`) that builds and uploads downloadable assets.
+
+Example:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Release assets include Linux, macOS, and Windows binaries plus `checksums.txt`.
