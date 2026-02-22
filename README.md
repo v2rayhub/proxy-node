@@ -11,13 +11,27 @@ go build -o health-node ./cmd/health-node
 ## Requirements
 
 - Linux VM
-- V2Ray or Xray core binary installed (examples below use `xray`)
+- V2Ray or Xray core binary available. Preferred packaging is to ship it with `health-node`.
+
+## Bundle the core (recommended)
+
+Put files in one folder:
+
+```text
+deploy/
+  health-node
+  xray
+```
+
+Then run without `--core`; the CLI auto-detects:
+- `./xray` or `./v2ray` next to `health-node`
+- `./core/xray` or `./core/v2ray` next to `health-node`
+- `xray`/`v2ray` in `PATH` (fallback)
 
 ## Probe connectivity
 
 ```bash
 ./health-node probe \
-  --core /usr/local/bin/xray \
   --uri 'vless://UUID@server.example.com:443?type=ws&security=tls&host=server.example.com&path=%2Fws&sni=server.example.com'
 ```
 
@@ -31,7 +45,6 @@ status=ok protocol=vless code=204 latency_ms=890 bytes=0
 
 ```bash
 ./health-node speed \
-  --core /usr/local/bin/xray \
   --uri 'vmess://eyJhZGQiOiJzZXJ2ZXIuZXhhbXBsZS5jb20iLCJwb3J0IjoiNDQzIiwiaWQiOiJVVUlEIiwiYWlkIjoiMCIsIm5ldCI6IndzIiwiaG9zdCI6InNlcnZlci5leGFtcGxlLmNvbSIsInBhdGgiOiIvd3MiLCJ0bHMiOiJ0bHMifQ==' \
   --max-bytes 10485760
 ```
@@ -48,3 +61,4 @@ status=ok protocol=vmess bytes=10485760 elapsed_ms=4200 mbps=19.97
 - Only standard library is used.
 - URI parser currently focuses on common VMess/VLESS fields (TCP/WS/gRPC and TLS basics).
 - Architecture is split by package so you can add new providers (for example WireGuard) later.
+- You can still override core path explicitly with `--core /path/to/xray`.

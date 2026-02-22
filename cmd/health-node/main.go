@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -50,8 +52,8 @@ func usage() {
 	fmt.Println(`health-node - v2ray/xray outbound health checker
 
 Usage:
-  health-node probe --uri <vless|vmess URI> --core <path to xray/v2ray>
-  health-node speed --uri <vless|vmess URI> --core <path to xray/v2ray>
+  health-node probe --uri <vless|vmess URI> [--core <path to xray/v2ray>]
+  health-node speed --uri <vless|vmess URI> [--core <path to xray/v2ray>]
 
 Commands:
   probe   Start core with generated config and run an HTTP probe through SOCKS5.
@@ -59,7 +61,7 @@ Commands:
 
 Common flags:
   --uri string          VLESS/VMess URI
-  --core string         core binary path (default: xray)
+  --core string         core binary path (optional, auto-detected if empty)
   --local-socks int     local SOCKS port (default: random 20000-40000)
   --timeout duration    timeout for startup and checks (default: 20s)
 
@@ -75,7 +77,7 @@ Speed flags:
 func runProbe(args []string) error {
 	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
 	uri := fs.String("uri", "", "VLESS/VMess URI")
-	corePath := fs.String("core", "xray", "core binary path")
+	corePath := fs.String("core", "", "core binary path")
 	probeURL := fs.String("url", "https://www.gstatic.com/generate_204", "probe URL")
 	timeout := fs.Duration("timeout", 20*time.Second, "timeout")
 	localPort := fs.Int("local-socks", 0, "local socks port")
@@ -84,6 +86,10 @@ func runProbe(args []string) error {
 	}
 	if *uri == "" {
 		return errors.New("--uri is required")
+	}
+	resolvedCore, err := resolveCorePath(*corePath)
+	if err != nil {
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -102,7 +108,7 @@ func runProbe(args []string) error {
 		port = randomPort()
 	}
 
-	r := core.Runner{CorePath: *corePath, Port: port, Timeout: *timeout}
+	r := core.Runner{CorePath: resolvedCore, Port: port, Timeout: *timeout}
 	started, err := r.Start(ctx, outbound)
 	if err != nil {
 		return err
@@ -126,7 +132,7 @@ func runProbe(args []string) error {
 func runSpeed(args []string) error {
 	fs := flag.NewFlagSet("speed", flag.ContinueOnError)
 	uri := fs.String("uri", "", "VLESS/VMess URI")
-	corePath := fs.String("core", "xray", "core binary path")
+	corePath := fs.String("core", "", "core binary path")
 	speedURL := fs.String("url", "https://speed.hetzner.de/10MB.bin", "speed test URL")
 	maxBytes := fs.Int64("max-bytes", 10*1024*1024, "max bytes to download (0 for full)")
 	timeout := fs.Duration("timeout", 45*time.Second, "timeout")
@@ -136,6 +142,10 @@ func runSpeed(args []string) error {
 	}
 	if *uri == "" {
 		return errors.New("--uri is required")
+	}
+	resolvedCore, err := resolveCorePath(*corePath)
+	if err != nil {
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -154,7 +164,7 @@ func runSpeed(args []string) error {
 		port = randomPort()
 	}
 
-	r := core.Runner{CorePath: *corePath, Port: port, Timeout: *timeout}
+	r := core.Runner{CorePath: resolvedCore, Port: port, Timeout: *timeout}
 	started, err := r.Start(ctx, outbound)
 	if err != nil {
 		return err
@@ -270,4 +280,44 @@ func httpClientThroughSocks(socksAddr string, timeout time.Duration) *http.Clien
 func randomPort() int {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return 20000 + r.Intn(20000)
+}
+
+func resolveCorePath(flagPath string) (string, error) {
+	// Explicit path always wins.
+	if strings.TrimSpace(flagPath) != "" {
+		return flagPath, nil
+	}
+
+	exePath, err := os.Executable()
+	if err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates := []string{
+			filepath.Join(exeDir, "xray"),
+			filepath.Join(exeDir, "v2ray"),
+			filepath.Join(exeDir, "core", "xray"),
+			filepath.Join(exeDir, "core", "v2ray"),
+		}
+		for _, c := range candidates {
+			if isExecutableFile(c) {
+				return c, nil
+			}
+		}
+	}
+
+	// Fallback to PATH so existing setups still work.
+	for _, name := range []string{"xray", "v2ray"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p, nil
+		}
+	}
+
+	return "", errors.New("core binary not found: place xray/v2ray next to health-node (or in ./core), or pass --core")
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Mode().Perm()&0o111 != 0
 }
