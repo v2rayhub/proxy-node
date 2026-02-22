@@ -60,7 +60,7 @@ func Install(ctx context.Context, opts Options) (installedPath, tag string, err 
 		return "", rel.TagName, err
 	}
 
-	tmpDir, err := os.MkdirTemp("", "health-node-core-")
+	tmpDir, err := os.MkdirTemp("", "proxy-node-core-")
 	if err != nil {
 		return "", rel.TagName, fmt.Errorf("create temp dir: %w", err)
 	}
@@ -106,7 +106,7 @@ func fetchRelease(ctx context.Context, repo, version string) (*release, error) {
 		return nil, fmt.Errorf("build release request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "health-node")
+	req.Header.Set("User-Agent", "proxy-node")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -392,7 +392,7 @@ func downloadFile(ctx context.Context, url, dst string) error {
 	if err != nil {
 		return fmt.Errorf("build download request: %w", err)
 	}
-	req.Header.Set("User-Agent", "health-node")
+	req.Header.Set("User-Agent", "proxy-node")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
