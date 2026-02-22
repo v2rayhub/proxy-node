@@ -16,12 +16,14 @@ type Runner struct {
 	Port            int
 	Timeout         time.Duration
 	InboundProtocol string
+	LogLevel        string
 }
 
 type Started struct {
-	Cmd        *exec.Cmd
-	ConfigPath string
-	LogPath    string
+	Cmd           *exec.Cmd
+	ConfigPath    string
+	LogPath       string
+	AccessLogPath string
 }
 
 func (r Runner) Start(ctx context.Context, outbound map[string]any) (*Started, error) {
@@ -38,6 +40,10 @@ func (r Runner) Start(ctx context.Context, outbound map[string]any) (*Started, e
 	if inboundProtocol != "socks" && inboundProtocol != "http" {
 		return nil, fmt.Errorf("unsupported inbound protocol %q", inboundProtocol)
 	}
+	logLevel := strings.TrimSpace(r.LogLevel)
+	if logLevel == "" {
+		logLevel = "warning"
+	}
 
 	inbound := map[string]any{
 		"listen":   "127.0.0.1",
@@ -50,7 +56,7 @@ func (r Runner) Start(ctx context.Context, outbound map[string]any) (*Started, e
 
 	cfg := map[string]any{
 		"log": map[string]any{
-			"loglevel": "warning",
+			"loglevel": logLevel,
 		},
 		"inbounds": []any{inbound},
 		"outbounds": []any{
@@ -70,6 +76,13 @@ func (r Runner) Start(ctx context.Context, outbound map[string]any) (*Started, e
 	}
 	configPath := filepath.Join(dir, "config.json")
 	logPath := filepath.Join(dir, "core.log")
+	accessLogPath := filepath.Join(dir, "access.log")
+
+	cfg["log"] = map[string]any{
+		"loglevel": logLevel,
+		"access":   accessLogPath,
+		"error":    logPath,
+	}
 	if err := os.WriteFile(configPath, body, 0o600); err != nil {
 		return nil, fmt.Errorf("write config: %w", err)
 	}
@@ -90,7 +103,7 @@ func (r Runner) Start(ctx context.Context, outbound map[string]any) (*Started, e
 	}
 	_ = logf.Close()
 
-	return &Started{Cmd: cmd, ConfigPath: configPath, LogPath: logPath}, nil
+	return &Started{Cmd: cmd, ConfigPath: configPath, LogPath: logPath, AccessLogPath: accessLogPath}, nil
 }
 
 func (s *Started) Stop() {

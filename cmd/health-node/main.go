@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -14,6 +15,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"strings"
 	"syscall"
 	"time"
@@ -96,6 +99,8 @@ Speed flags:
 Proxy flags:
   --inbound string      inbound protocol: socks|http (default: socks)
   --local-port int      local proxy listen port (default: 1080 for socks, 8080 for http)
+  --print-requests      stream core log lines while running
+  --no-traffic          disable live uplink/downlink bytes per second output
   --timeout duration    startup timeout (default: 20s)
 
 Install-core flags:
@@ -250,6 +255,8 @@ func runProxy(args []string, defaultInbound string) error {
 	corePath := fs.String("core", "", "core binary path")
 	inbound := fs.String("inbound", defaultInbound, "inbound protocol: socks|http")
 	localPort := fs.Int("local-port", 0, "local proxy listen port")
+	printRequests := fs.Bool("print-requests", false, "stream core log lines")
+	noTraffic := fs.Bool("no-traffic", false, "disable live traffic counters")
 	timeout := fs.Duration("timeout", 20*time.Second, "startup timeout")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -281,33 +288,245 @@ func runProxy(args []string, defaultInbound string) error {
 	if err != nil {
 		return err
 	}
+	showTraffic := !*noTraffic
+
 	outbound, err := prov.Outbound()
 	if err != nil {
 		return err
 	}
 
-	r := core.Runner{CorePath: resolvedCore, Port: *localPort, Timeout: *timeout, InboundProtocol: *inbound}
+	corePort := *localPort
+	if showTraffic {
+		corePort = randomPort()
+		if corePort == *localPort {
+			corePort = randomPort()
+		}
+	}
+
+	logLevel := "warning"
+	if *printRequests {
+		logLevel = "info"
+	}
+	r := core.Runner{
+		CorePath:        resolvedCore,
+		Port:            corePort,
+		Timeout:         *timeout,
+		InboundProtocol: *inbound,
+		LogLevel:        logLevel,
+	}
 	started, err := r.Start(context.Background(), outbound)
 	if err != nil {
 		return err
 	}
 	defer started.Stop()
 
-	socksAddr := fmt.Sprintf("127.0.0.1:%d", *localPort)
+	coreAddr := fmt.Sprintf("127.0.0.1:%d", corePort)
+	listenAddr := fmt.Sprintf("127.0.0.1:%d", *localPort)
 	startupCtx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	if err := waitSocks(startupCtx, socksAddr, *timeout); err != nil {
+	if err := waitSocks(startupCtx, coreAddr, *timeout); err != nil {
 		return fmt.Errorf("core did not become ready: %w\ncore log tail:\n%s", err, started.ReadLogTail())
 	}
 
-	fmt.Printf("status=ok mode=proxy inbound=%s protocol=%s listen=%s\n", *inbound, prov.Name(), socksAddr)
+	stopRelay := func() {}
+	var meter *trafficMeter
+	if showTraffic {
+		meter = newTrafficMeter()
+		stop, err := startRelay(listenAddr, coreAddr, meter)
+		if err != nil {
+			return fmt.Errorf("start local relay: %w", err)
+		}
+		stopRelay = stop
+	}
+	defer stopRelay()
+
+	fmt.Printf("status=ok mode=proxy inbound=%s protocol=%s listen=%s\n", *inbound, prov.Name(), listenAddr)
 	fmt.Println("running until interrupted (Ctrl+C)")
+	if *printRequests {
+		fmt.Printf("log=%s\n", started.LogPath)
+	}
+	if showTraffic {
+		fmt.Println("traffic meter enabled (uplink/downlink)")
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
+	stopLog := make(chan struct{})
+	stopTraffic := make(chan struct{})
+	var wg sync.WaitGroup
+	if *printRequests {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			streamLog(stopLog, started.AccessLogPath)
+		}()
+	}
+	if showTraffic {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			meter.run(stopTraffic)
+		}()
+	}
 	<-sigCh
+	close(stopLog)
+	close(stopTraffic)
+	wg.Wait()
 	return nil
+}
+
+func streamLog(stop <-chan struct{}, path string) {
+	var offset int64
+	for {
+		select {
+		case <-stop:
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		info, err := f.Stat()
+		if err != nil {
+			_ = f.Close()
+			continue
+		}
+		if info.Size() < offset {
+			offset = 0
+		}
+		if info.Size() == offset {
+			_ = f.Close()
+			continue
+		}
+		_, _ = f.Seek(offset, io.SeekStart)
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			fmt.Printf("[core] %s\n", sc.Text())
+		}
+		offset = info.Size()
+		_ = f.Close()
+	}
+}
+
+type trafficMeter struct {
+	upTotal   atomic.Uint64
+	downTotal atomic.Uint64
+}
+
+func newTrafficMeter() *trafficMeter {
+	return &trafficMeter{}
+}
+
+func (m *trafficMeter) run(stop <-chan struct{}) {
+	t := time.NewTicker(1 * time.Second)
+	defer t.Stop()
+
+	var prevUp uint64
+	var prevDown uint64
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			up := m.upTotal.Load()
+			down := m.downTotal.Load()
+			upRate := up - prevUp
+			downRate := down - prevDown
+			prevUp = up
+			prevDown = down
+			fmt.Printf("[traffic] up=%s/s down=%s/s total_up=%s total_down=%s\n",
+				humanBytes(upRate), humanBytes(downRate), humanBytes(up), humanBytes(down))
+		}
+	}
+}
+
+func startRelay(listenAddr, targetAddr string, meter *trafficMeter) (func(), error) {
+	ln, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return nil, err
+	}
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				continue
+			}
+			wg.Add(1)
+			go func(c net.Conn) {
+				defer wg.Done()
+				relayConn(c, targetAddr, meter)
+			}(conn)
+		}
+	}()
+
+	return func() {
+		close(stop)
+		_ = ln.Close()
+		wg.Wait()
+	}, nil
+}
+
+func relayConn(client net.Conn, targetAddr string, meter *trafficMeter) {
+	defer client.Close()
+	target, err := net.Dial("tcp", targetAddr)
+	if err != nil {
+		return
+	}
+	defer target.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		n, _ := io.Copy(target, client)
+		if n > 0 {
+			meter.upTotal.Add(uint64(n))
+		}
+		if tc, ok := target.(*net.TCPConn); ok {
+			_ = tc.CloseWrite()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		n, _ := io.Copy(client, target)
+		if n > 0 {
+			meter.downTotal.Add(uint64(n))
+		}
+		if tc, ok := client.(*net.TCPConn); ok {
+			_ = tc.CloseWrite()
+		}
+	}()
+	wg.Wait()
+}
+
+func humanBytes(n uint64) string {
+	const (
+		KB = 1024
+		MB = 1024 * KB
+		GB = 1024 * MB
+	)
+	switch {
+	case n >= GB:
+		return fmt.Sprintf("%.2fGB", float64(n)/GB)
+	case n >= MB:
+		return fmt.Sprintf("%.2fMB", float64(n)/MB)
+	case n >= KB:
+		return fmt.Sprintf("%.2fKB", float64(n)/KB)
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
 }
 
 func waitSocks(ctx context.Context, socksAddr string, timeout time.Duration) error {
