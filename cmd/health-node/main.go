@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"health-node/internal/core"
+	"health-node/internal/installer"
 	"health-node/internal/proxy"
 	"health-node/internal/provider"
 )
@@ -39,6 +40,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "speed failed: %v\n", err)
 			os.Exit(1)
 		}
+	case "install-core":
+		if err := runInstallCore(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "install-core failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -58,6 +64,7 @@ Usage:
 Commands:
   probe   Start core with generated config and run an HTTP probe through SOCKS5.
   speed   Start core and measure download speed through SOCKS5.
+  install-core  Download and install Xray/V2Ray core from GitHub release.
 
 Common flags:
   --uri string          VLESS/VMess URI
@@ -71,6 +78,12 @@ Probe flags:
 Speed flags:
   --url string          download URL (default: https://speed.hetzner.de/10MB.bin)
   --max-bytes int       stop after N bytes (0 means full response)
+
+Install-core flags:
+  --repo string         GitHub repo owner/name (default: XTLS/Xray-core)
+  --version string      release tag or "latest" (default: latest)
+  --dest string         install directory (default: current dir)
+  --force               overwrite existing binary if present
 `)
 }
 
@@ -182,6 +195,33 @@ func runSpeed(args []string) error {
 	}
 	mbps := (float64(bytesRead) * 8) / elapsed.Seconds() / 1_000_000
 	fmt.Printf("status=ok protocol=%s bytes=%d elapsed_ms=%d mbps=%.2f\n", prov.Name(), bytesRead, elapsed.Milliseconds(), mbps)
+	return nil
+}
+
+func runInstallCore(args []string) error {
+	fs := flag.NewFlagSet("install-core", flag.ContinueOnError)
+	repo := fs.String("repo", "XTLS/Xray-core", "GitHub repo owner/name")
+	version := fs.String("version", "latest", "release tag or latest")
+	dest := fs.String("dest", ".", "install directory")
+	force := fs.Bool("force", false, "overwrite existing binary")
+	timeout := fs.Duration("timeout", 2*time.Minute, "download/install timeout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	path, tag, err := installer.Install(ctx, installer.Options{
+		Repo:    *repo,
+		Version: *version,
+		DestDir: *dest,
+		Force:   *force,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("status=ok repo=%s version=%s installed=%s\n", *repo, tag, path)
 	return nil
 }
 

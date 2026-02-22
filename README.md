@@ -28,6 +28,24 @@ Then run without `--core`; the CLI auto-detects:
 - `./core/xray` or `./core/v2ray` next to `health-node`
 - `xray`/`v2ray` in `PATH` (fallback)
 
+## Auto download/install core
+
+You can let the CLI install core from GitHub releases:
+
+```bash
+./health-node install-core
+```
+
+Examples:
+
+```bash
+# default: latest from XTLS/Xray-core into current directory
+./health-node install-core
+
+# specific repo/tag and destination directory
+./health-node install-core --repo v2fly/v2ray-core --version v5.20.0 --dest ./core
+```
+
 ## Probe connectivity
 
 ```bash
