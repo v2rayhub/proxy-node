@@ -24,10 +24,10 @@ import (
 
 	"github.com/rivo/tview"
 
-	"health-node/internal/core"
-	"health-node/internal/installer"
-	"health-node/internal/provider"
-	"health-node/internal/proxy"
+	"proxy-node/internal/core"
+	"proxy-node/internal/installer"
+	"proxy-node/internal/provider"
+	"proxy-node/internal/proxy"
 )
 
 func main() {
@@ -73,11 +73,11 @@ func main() {
 }
 
 func usage() {
-	fmt.Print(`health-node - v2ray/xray outbound health checker
+	fmt.Print(`proxy-node - v2ray/xray outbound health checker
 
 Usage:
-  health-node probe --uri <vless|vmess URI> [--core <path to xray/v2ray>]
-  health-node speed --uri <vless|vmess URI> [--core <path to xray/v2ray>]
+  proxy-node probe --uri <vless|vmess URI> [--core <path to xray/v2ray>]
+  proxy-node speed --uri <vless|vmess URI> [--core <path to xray/v2ray>]
 
 Commands:
   probe   Start core with generated config and run an HTTP probe through SOCKS5.
@@ -795,7 +795,7 @@ func resolveCorePath(flagPath string) (string, error) {
 		}
 	}
 
-	return "", errors.New("core binary not found: place xray/v2ray next to health-node (or in ./core), or pass --core")
+	return "", errors.New("core binary not found: place xray/v2ray next to proxy-node (or in ./core), or pass --core")
 }
 
 func isExecutableFile(path string) bool {

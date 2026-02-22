@@ -70,7 +70,7 @@ func (r Runner) Start(ctx context.Context, outbound map[string]any) (*Started, e
 		return nil, fmt.Errorf("marshal core config: %w", err)
 	}
 
-	dir, err := os.MkdirTemp("", "health-node-")
+	dir, err := os.MkdirTemp("", "proxy-node-")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}

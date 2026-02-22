@@ -1,8 +1,8 @@
-# health-node
+# proxy-node
 
-[![Release](https://img.shields.io/github/v/release/v2rayhub/health-node)](https://github.com/v2rayhub/health-node/releases)
-[![Release Workflow](https://github.com/v2rayhub/health-node/actions/workflows/release.yml/badge.svg)](https://github.com/v2rayhub/health-node/actions/workflows/release.yml)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/v2rayhub/health-node)](https://github.com/v2rayhub/health-node/blob/main/go.mod)
+[![Release](https://img.shields.io/github/v/release/v2rayhub/proxy-node)](https://github.com/v2rayhub/proxy-node/releases)
+[![Release Workflow](https://github.com/v2rayhub/proxy-node/actions/workflows/release.yml/badge.svg)](https://github.com/v2rayhub/proxy-node/actions/workflows/release.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/v2rayhub/proxy-node)](https://github.com/v2rayhub/proxy-node/blob/main/go.mod)
 
 Small V2Ray/Xray client utility for Linux and macOS.
 It can open local SOCKS/HTTP proxy from `vless://`, `vmess://`, `ss://`, run health checks, and run speed tests.
@@ -13,31 +13,31 @@ It can open local SOCKS/HTTP proxy from `vless://`, `vmess://`, `ss://`, run hea
 
 Prebuilt binaries:
 
-https://github.com/v2rayhub/health-node/releases
+https://github.com/v2rayhub/proxy-node/releases
 
 Or build locally:
 
 ```bash
-go build -o health-node ./cmd/health-node
+go build -o proxy-node ./cmd/proxy-node
 ```
 
 ### Install Core (Automatic)
 
 ```bash
-./health-node install-core
+./proxy-node install-core
 ```
 
 Examples:
 
 ```bash
 # specific Xray version
-./health-node install-core --repo XTLS/Xray-core --version v26.2.6
+./proxy-node install-core --repo XTLS/Xray-core --version v26.2.6
 
 # v2ray-core into ./core
-./health-node install-core --repo v2fly/v2ray-core --version v5.20.0 --dest ./core
+./proxy-node install-core --repo v2fly/v2ray-core --version v5.20.0 --dest ./core
 
 # overwrite existing core binary
-./health-node install-core --force
+./proxy-node install-core --force
 ```
 
 Core auto-detection order:
@@ -50,13 +50,13 @@ Core auto-detection order:
 SOCKS5 (default):
 
 ```bash
-./health-node proxy --uri 'vmess://BASE64_JSON' --local-port 1080
+./proxy-node proxy --uri 'vmess://BASE64_JSON' --local-port 1080
 ```
 
 HTTP proxy:
 
 ```bash
-./health-node proxy --uri 'vmess://BASE64_JSON' --inbound http --local-port 8080
+./proxy-node proxy --uri 'vmess://BASE64_JSON' --inbound http --local-port 8080
 ```
 
 Notes:
@@ -70,13 +70,13 @@ Notes:
 Connectivity probe:
 
 ```bash
-./health-node probe --uri 'vless://UUID@server.example.com:443?type=ws&security=tls&host=server.example.com&path=%2Fws&sni=server.example.com'
+./proxy-node probe --uri 'vless://UUID@server.example.com:443?type=ws&security=tls&host=server.example.com&path=%2Fws&sni=server.example.com'
 ```
 
 Speed test:
 
 ```bash
-./health-node speed \
+./proxy-node speed \
   --uri 'vmess://BASE64_JSON' \
   --url 'https://ash-speed.hetzner.com/1GB.bin' \
   --max-bytes 0 \
@@ -86,11 +86,11 @@ Speed test:
 Help:
 
 ```bash
-./health-node --help
-./health-node proxy --help
-./health-node probe --help
-./health-node speed --help
-./health-node install-core --help
+./proxy-node --help
+./proxy-node proxy --help
+./proxy-node probe --help
+./proxy-node speed --help
+./proxy-node install-core --help
 ```
 
 ## How To Develop And Extend
@@ -105,7 +105,7 @@ gofmt -w ./cmd ./internal
 go test ./...
 
 # build
-go build -o health-node ./cmd/health-node
+go build -o proxy-node ./cmd/proxy-node
 ```
 
 Targeted tests:
@@ -116,7 +116,7 @@ go test ./internal/provider -v
 
 ### Project Structure
 
-- `cmd/health-node/main.go`
+- `cmd/proxy-node/main.go`
 CLI commands and runtime orchestration.
 
 - `internal/core`

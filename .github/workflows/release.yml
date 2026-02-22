@@ -46,6 +46,10 @@ jobs:
       - name: run tests
         run: go test ./...
 
+      - name: check entrypoint
+        run: |
+          test -d ./cmd/proxy-node || (echo "missing ./cmd/proxy-node in this commit/tag" && exit 1)
+
       - name: build binary
         env:
           CGO_ENABLED: 0
@@ -53,16 +57,16 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p dist
-          BIN_NAME="health-node-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
-          go build -trimpath -ldflags "-s -w" -o "dist/${BIN_NAME}" ./cmd/health-node
+          BIN_NAME="proxy-node-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          go build -trimpath -ldflags "-s -w" -o "dist/${BIN_NAME}" ./cmd/proxy-node
 
       - name: package archive
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          BASE="health-node_${VERSION#v}_${{ matrix.goos }}_${{ matrix.goarch }}"
-          BIN_NAME="health-node-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          BASE="proxy-node_${VERSION#v}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          BIN_NAME="proxy-node-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
           mkdir -p package
-          cp "dist/${BIN_NAME}" "package/health-node${{ matrix.ext }}"
+          cp "dist/${BIN_NAME}" "package/proxy-node${{ matrix.ext }}"
           cp README.md package/README.md
 
           if [ "${{ matrix.goos }}" = "windows" ]; then

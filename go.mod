@@ -1,4 +1,4 @@
-module health-node
+module proxy-node
 
 go 1.22
 
