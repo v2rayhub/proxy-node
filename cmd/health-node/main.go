@@ -55,7 +55,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println(`health-node - v2ray/xray outbound health checker
+	fmt.Print(`health-node - v2ray/xray outbound health checker
 
 Usage:
   health-node probe --uri <vless|vmess URI> [--core <path to xray/v2ray>]
